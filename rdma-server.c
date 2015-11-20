@@ -41,7 +41,7 @@ int main(int argc, char **argv)
   setClient(0);
 
   printf("Podano adres %s i port: %s\n", argv[2], argv[3]); 
-  porcik = atoi(argv[2]);
+  porcik = atoi(argv[3]);
   printf("Parsed port: %d\n", porcik);
   port2 = porcik;
   printf("Converted port number: %u\n", port2);

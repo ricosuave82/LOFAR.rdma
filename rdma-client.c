@@ -17,7 +17,7 @@ int main(int argc, char **argv)
   struct rdma_event_channel *ec = NULL;
   int udpMode = 0;
 
-  if (argc != 4)
+  if (argc != 5)
     usage(argv[0]);
 
   if (strcmp(argv[1], "write") == 0)
@@ -38,7 +38,7 @@ int main(int argc, char **argv)
 
   setClient(1);
 
-  TEST_NZ(getaddrinfo(argv[2], argv[3], NULL, &addr));
+  TEST_NZ(getaddrinfo(argv[3], argv[4], NULL, &addr));
 
   TEST_Z(ec = rdma_create_event_channel());
   if (udpMode)
