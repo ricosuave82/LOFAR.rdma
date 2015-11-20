@@ -15,10 +15,11 @@ int main(int argc, char **argv)
   uint16_t port = 0;
   uint16_t port2 = 0;
   int porcik;
+  int udpMode = 0;
 
   printf("%d\n", argc);
 
-  if (argc != 3)
+  if (argc != 4)
     usage(argv[0]);
 
   if (strcmp(argv[1], "write") == 0)
@@ -26,6 +27,15 @@ int main(int argc, char **argv)
   else if (strcmp(argv[1], "read") == 0)
     set_mode(M_READ);
   else
+    usage(argv[0]);
+
+  if (strcmp(argv[2], "tcp") == 0) {
+  	setUdp(0);
+	udpMode = 0;
+  } else if (strcmp(argv[2], "udp") == 0) {
+    setUdp(1);
+	udpMode = 1;
+  } else
     usage(argv[0]);
 
   setClient(0);
@@ -42,7 +52,11 @@ int main(int argc, char **argv)
   addr.sin_port = htons((uint16_t)porcik);
 
   TEST_Z(ec = rdma_create_event_channel());
-  TEST_NZ(rdma_create_id(ec, &listener, NULL, RDMA_PS_TCP));
+  if (udpMode)
+  	TEST_NZ(rdma_create_id(ec, &listener, NULL, RDMA_PS_UDP));
+  else
+  	TEST_NZ(rdma_create_id(ec, &listener, NULL, RDMA_PS_TCP));
+
   TEST_NZ(rdma_bind_addr(listener, (struct sockaddr *)&addr));
   TEST_NZ(rdma_listen(listener, 10)); /* backlog=10 is arbitrary */
 
@@ -112,6 +126,6 @@ int on_event(struct rdma_cm_event *event)
 
 void usage(const char *argv0)
 {
-  fprintf(stderr, "usage: %s <mode>\n  mode = \"read\", \"write\"\n", argv0);
+  fprintf(stderr, "usage: %s <mode> <tcp/udp> <port no.>\n  mode = \"read\", \"write\"\n", argv0);
   exit(1);
 }

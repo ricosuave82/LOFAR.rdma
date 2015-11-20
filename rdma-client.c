@@ -15,6 +15,7 @@ int main(int argc, char **argv)
   struct rdma_cm_event *event = NULL;
   struct rdma_cm_id *conn= NULL;
   struct rdma_event_channel *ec = NULL;
+  int udpMode = 0;
 
   if (argc != 4)
     usage(argv[0]);
@@ -26,12 +27,25 @@ int main(int argc, char **argv)
   else
     usage(argv[0]);
 
+  if (strcmp(argv[2], "tcp") == 0) {
+  	setUdp(0);
+	udpMode = 0;
+  } else if (strcmp(argv[2], "udp") == 0) {
+  	setUdp(1);
+	udpMode = 1;
+  } else
+  	usage(argv[0]);
+
   setClient(1);
 
   TEST_NZ(getaddrinfo(argv[2], argv[3], NULL, &addr));
 
   TEST_Z(ec = rdma_create_event_channel());
-  TEST_NZ(rdma_create_id(ec, &conn, NULL, RDMA_PS_TCP));
+  if (udpMode)
+  	TEST_NZ(rdma_create_id(ec, &conn, NULL, RDMA_PS_UDP));
+  else
+  	TEST_NZ(rdma_create_id(ec, &conn, NULL, RDMA_PS_TCP));
+
   TEST_NZ(rdma_resolve_addr(conn, NULL, addr->ai_addr, TIMEOUT_IN_MS));
 
   freeaddrinfo(addr);
@@ -111,6 +125,6 @@ int on_route_resolved(struct rdma_cm_id *id)
 
 void usage(const char *argv0)
 {
-  fprintf(stderr, "usage: %s <mode> <server-address> <server-port>\n  mode = \"read\", \"write\"\n", argv0);
+  fprintf(stderr, "usage: %s <mode> <tcp/udp> <server-address> <server-port>\n  mode = \"read\", \"write\"\n", argv0);
   exit(1);
 }

@@ -26,5 +26,6 @@ void on_connect(void *context);
 void send_mr(void *context);
 void set_mode(enum mode m);
 void setClient(int client);
+void setUdp(int udp);
 
 #endif

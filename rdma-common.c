@@ -4,6 +4,7 @@
 static const int RDMA_BUFFER_SIZE = 8192;
 static const int debug = 0;
 static int nowSending = 0;
+static int udpMode = 0;
 
 struct message {
   enum {
@@ -136,7 +137,10 @@ void build_qp_attr(struct ibv_qp_init_attr *qp_attr)
 
   qp_attr->send_cq = s_ctx->cq;
   qp_attr->recv_cq = s_ctx->cq;
-  qp_attr->qp_type = IBV_QPT_RC;
+  if (udpMode)
+  	qp_attr->qp_type = IBV_QPT_UC;
+  else
+  	qp_attr->qp_type = IBV_QPT_RC;
 
   qp_attr->cap.max_send_wr = 15;
   qp_attr->cap.max_recv_wr = 12;
@@ -388,5 +392,9 @@ void set_mode(enum mode m)
 
 void setClient(int client) {
   clientSide = client;
+}
+
+void setUdp(int udp) {
+  udpMode = udp;
 }
 
