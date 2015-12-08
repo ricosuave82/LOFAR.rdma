@@ -70,8 +70,11 @@ int main(int argc, char **argv)
     memcpy(&event_copy, event, sizeof(*event));
     rdma_ack_cm_event(event);
 
-    if (on_event(&event_copy))
+    if (on_event(&event_copy)) {
+	  printf("Does that happen once or more?\n");
       break;
+	}
+
   }
 
   rdma_destroy_id(listener);

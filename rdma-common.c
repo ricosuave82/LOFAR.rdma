@@ -1,10 +1,16 @@
 #include "rdma-common.h"
 #include <unistd.h>
 
+//parameters to edit
+#define RING_BUFFER_SIZE 3
 static const int RDMA_BUFFER_SIZE = 8192;
-static const int debug = 0;
+static const int debug = 1;
+
+//global variables, don't touch
 static int nowSending = 0;
 static int udpMode = 0;
+static int counter;
+static int currMR = 0;
 
 struct message {
   enum {
@@ -13,7 +19,7 @@ struct message {
   } type;
 
   union {
-    struct ibv_mr mr;
+    struct ibv_mr mr[RING_BUFFER_SIZE];
   } data;
 };
 
@@ -34,16 +40,16 @@ struct connection {
 
   struct ibv_mr *recv_mr;
   struct ibv_mr *send_mr;
-  struct ibv_mr *rdma_local_mr;
-  struct ibv_mr *rdma_remote_mr;
+  struct ibv_mr *rdma_local_mr[RING_BUFFER_SIZE];
+  struct ibv_mr *rdma_remote_mr[RING_BUFFER_SIZE];
 
-  struct ibv_mr peer_mr;
+  struct ibv_mr peer_mr[RING_BUFFER_SIZE];
 
   struct message *recv_msg;
   struct message *send_msg;
 
-  char *rdma_local_region;
-  char *rdma_remote_region;
+  char *rdma_local_region[RING_BUFFER_SIZE];
+  char *rdma_remote_region[RING_BUFFER_SIZE];
 
   enum {
     SS_INIT,
@@ -143,9 +149,9 @@ void build_qp_attr(struct ibv_qp_init_attr *qp_attr)
   	qp_attr->qp_type = IBV_QPT_RC;
 
   qp_attr->cap.max_send_wr = 15;
-  qp_attr->cap.max_recv_wr = 12;
-  qp_attr->cap.max_send_sge = 1;
-  qp_attr->cap.max_recv_sge = 1;
+  qp_attr->cap.max_recv_wr = 15;
+  qp_attr->cap.max_send_sge = 3;
+  qp_attr->cap.max_recv_sge = 3;
 }
 
 void destroy_connection(void *context)
@@ -156,13 +162,23 @@ void destroy_connection(void *context)
 
   ibv_dereg_mr(conn->send_mr);
   ibv_dereg_mr(conn->recv_mr);
-  ibv_dereg_mr(conn->rdma_local_mr);
-  ibv_dereg_mr(conn->rdma_remote_mr);
+
+  int a;
+
+  for (a = 0; a < RING_BUFFER_SIZE; a++)
+  	ibv_dereg_mr(conn->rdma_local_mr[a]);
+
+  for (a = 0; a < RING_BUFFER_SIZE; a++)
+      ibv_dereg_mr(conn->rdma_remote_mr[a]);
 
   free(conn->send_msg);
   free(conn->recv_msg);
-  free(conn->rdma_local_region);
-  free(conn->rdma_remote_region);
+  
+  for (a = 0; a < RING_BUFFER_SIZE; a++)
+  	free(conn->rdma_local_region[a]);
+  
+  for (a = 0; a < RING_BUFFER_SIZE; a++)
+	free(conn->rdma_remote_region[a]);
 
   rdma_destroy_id(conn->id);
 
@@ -171,18 +187,23 @@ void destroy_connection(void *context)
 
 void * get_local_message_region(void *context)
 {
+  if (debug)
+  	printf("CurrMR %d, get local message region\n", currMR);
   if (s_mode == M_WRITE)
-    return ((struct connection *)context)->rdma_local_region;
+    return ((struct connection *)context)->rdma_local_region[currMR];
   else
-    return ((struct connection *)context)->rdma_remote_region;
+    return ((struct connection *)context)->rdma_remote_region[currMR];
 }
 
 char * get_peer_message_region(struct connection *conn)
 {
+  if (debug)
+      printf("CurrMR %d, get remote message region\n", currMR);
+
   if (s_mode == M_WRITE)
-    return conn->rdma_remote_region;
+    return conn->rdma_remote_region[currMR];
   else
-    return conn->rdma_local_region;
+    return conn->rdma_local_region[currMR];
 }
 
 void on_completion(struct ibv_wc *wc)
@@ -190,11 +211,14 @@ void on_completion(struct ibv_wc *wc)
   struct connection *conn = (struct connection *)(uintptr_t)wc->wr_id;
   int count;
 
-  if (debug)
+  if (debug) {
 	printf("Entering on completition. Clientside: %d.\n", clientSide);
+    printf("WC Status: %d\n", wc->status);
+  }
 
-  if (wc->status != IBV_WC_SUCCESS)
+  if (wc->status != IBV_WC_SUCCESS) 
     die("on_completion: status is not IBV_WC_SUCCESS.");
+ 
 
   if (wc->opcode & IBV_WC_RECV) {
     conn->recv_state++;
@@ -202,18 +226,27 @@ void on_completion(struct ibv_wc *wc)
 	printf("Opcode WC_RECV read, recv state increased to %d\n", conn->recv_state);
 
     if (conn->recv_msg->type == MSG_MR) {
-     if (debug) 
-	printf("received Mem region \n");
-      memcpy(&conn->peer_mr, &conn->recv_msg->data.mr, sizeof(conn->peer_mr));
+      
+	  for (int a=0; a<RING_BUFFER_SIZE; a++) {
+	  	memcpy(&conn->peer_mr[a], &conn->recv_msg->data.mr[a], sizeof(struct ibv_mr));
+		if (debug)
+			printf("received Mem region number %d, address: %ld \n", currMR, (long)conn->recv_msg->data.mr[a].addr);
+
+	  }
+
       post_receives(conn); /* only rearm for MSG_MR */
       if (debug)
-	printf("Posted receive after receiving Mem region\n");
+			printf("currMR = %d, posted receive after receiving Mem region\n", currMR);
+	  
 
-      if (conn->send_state == SS_INIT) {/* received peer's MR before sending ours, so send ours back */
+      if (conn->send_state == SS_INIT) {
+	  /* received ALL  peer's MRs before sending ours, so send ours back */
         send_mr(conn);
-        if (debug)
-		printf("Sent Mem Region\n");
+        
+		if (debug)
+		printf("Are we ever here? Sent Mem Region. Conditions: send_state %d, currMR %d\n", conn->send_state, currMR);
        }
+
     }
 
   } else {
@@ -222,11 +255,14 @@ void on_completion(struct ibv_wc *wc)
      printf("send state increased to %dy.\n", conn->send_state);
   }
 
+  if (debug)	
+  	printf(" - Send state: %d, Recv state: %d\n", conn->send_state, conn->recv_state);
+
   if ((conn->send_state == SS_MR_SENT && conn->recv_state == RS_MR_RECV) || (nowSending))  {
 
   	nowSending = 1;
 
-    if (clientSide) {
+    if (clientSide) { //we're on client side
     
     	struct ibv_send_wr wr, *bad_wr = NULL;
     	struct ibv_sge sge;
@@ -236,6 +272,13 @@ void on_completion(struct ibv_wc *wc)
     	else { if (debug)
       		printf("received MSG_MR. reading message from remote memory...\n"); }
 
+  		if (debug) {
+      		printf("CurrMR %d, writing a message in local region MR \n", currMR);
+			printf("Local buffer contents: %s\n", conn->rdma_local_region[currMR]);
+		}		
+
+        sprintf(conn->rdma_local_region[currMR], "Message number %d\n", counter);
+
     	memset(&wr, 0, sizeof(wr));
 
 		wr.wr_id = (uintptr_t)conn;
@@ -243,39 +286,43 @@ void on_completion(struct ibv_wc *wc)
     	wr.sg_list = &sge;
     	wr.num_sge = 1;
     	wr.send_flags = IBV_SEND_SIGNALED;
-    	wr.wr.rdma.remote_addr = (uintptr_t)conn->peer_mr.addr;
-    	wr.wr.rdma.rkey = conn->peer_mr.rkey;
+    	wr.wr.rdma.remote_addr = (uintptr_t)conn->peer_mr[currMR].addr;
+    	wr.wr.rdma.rkey = conn->peer_mr[currMR].rkey;
+        if (debug)
+			printf("Created WR and added remote region pointer %ld\n", (long)conn->peer_mr[currMR].addr);
 
-    	sge.addr = (uintptr_t)conn->rdma_local_region;
+
+  		if (debug)
+      		printf("CurrMR %d, created SGE and added local region pointer %ld\n", currMR, (long)conn->rdma_local_region[currMR]);
+    	sge.addr = (uintptr_t)conn->rdma_local_region[currMR];
     	sge.length = RDMA_BUFFER_SIZE;
-    	sge.lkey = conn->rdma_local_mr->lkey;
-    
-	
+    	sge.lkey = conn->rdma_local_mr[currMR]->lkey;
+
+		if (debug)
+			printf("CurrMR: %d\n",currMR);
+
 	for (count = 0; count < 1; count ++)
     		TEST_NZ(ibv_post_send(conn->qp, &wr, &bad_wr));
     
     	if (debug)
       		printf("Sent message, post send just now\n");
 
+		incCurrMR();
 
 	usleep(35);
 
-
-
-//    conn->send_msg->type = MSG_DONE;
-//    send_message(conn);
-//    	post_receives(conn);
-    
     	if (debug)
       		printf("Receives posted\n");
 
 //    	send_mr(conn);
    
-//    	if (debug)
-//     		printf("Sent Mem Region again\n");
-     }
+     } else { //we're on server side
 
-  } else if (conn->send_state == SS_DONE_SENT && conn->recv_state == RS_DONE_RECV) {
+		printf("Local buffer contents: %s, currMR: %d\n", conn->rdma_local_region[currMR], currMR);
+
+	}
+
+  } else if ((conn->send_state == SS_DONE_SENT) && (conn->recv_state == RS_DONE_RECV)) {
     printf("This never happens, right?\n");
     printf("remote buffer: %s\n", get_peer_message_region(conn));
   }
@@ -325,8 +372,14 @@ void register_memory(struct connection *conn)
   conn->send_msg = malloc(sizeof(struct message));
   conn->recv_msg = malloc(sizeof(struct message));
 
-  conn->rdma_local_region = malloc(RDMA_BUFFER_SIZE);
-  conn->rdma_remote_region = malloc(RDMA_BUFFER_SIZE);
+  int a;
+  for (a = 0; a < RING_BUFFER_SIZE; a++)
+  	conn->rdma_local_region[a] = malloc(RDMA_BUFFER_SIZE);
+  for (a = 0; a < RING_BUFFER_SIZE; a++)
+  	conn->rdma_remote_region[a] = malloc(RDMA_BUFFER_SIZE);
+
+  if (debug)
+  	printf("Regesitered %d local_regions and remote_regions.\n",RING_BUFFER_SIZE);
 
   TEST_Z(conn->send_mr = ibv_reg_mr(
     s_ctx->pd, 
@@ -340,17 +393,25 @@ void register_memory(struct connection *conn)
     sizeof(struct message), 
     IBV_ACCESS_LOCAL_WRITE | ((s_mode == M_WRITE) ? IBV_ACCESS_REMOTE_WRITE : IBV_ACCESS_REMOTE_READ)));
 
-  TEST_Z(conn->rdma_local_mr = ibv_reg_mr(
+  for (int a = 0; a < RING_BUFFER_SIZE; a++)
+  TEST_Z(conn->rdma_local_mr[a] = ibv_reg_mr(
     s_ctx->pd, 
-    conn->rdma_local_region, 
+    conn->rdma_local_region[a], 
     RDMA_BUFFER_SIZE, 
     IBV_ACCESS_LOCAL_WRITE));
+  if (debug)
+  	printf("Ibv_reg_mr local_mr %d times\n", RING_BUFFER_SIZE);
 
-  TEST_Z(conn->rdma_remote_mr = ibv_reg_mr(
+  for (int b = 0; b < RING_BUFFER_SIZE; b++)
+  TEST_Z(conn->rdma_remote_mr[b] = ibv_reg_mr(
     s_ctx->pd, 
-    conn->rdma_remote_region, 
+    conn->rdma_remote_region[b], 
     RDMA_BUFFER_SIZE, 
     IBV_ACCESS_LOCAL_WRITE | ((s_mode == M_WRITE) ? IBV_ACCESS_REMOTE_WRITE : IBV_ACCESS_REMOTE_READ)));
+
+  if (debug)
+	printf("Ibv_reg_mr remote_mr %d times\n", RING_BUFFER_SIZE);
+
 }
 
 void send_message(struct connection *conn)
@@ -378,15 +439,19 @@ void send_message(struct connection *conn)
 void send_mr(void *context)
 {
   struct connection *conn = (struct connection *)context;
-
+  int ab;
   conn->send_msg->type = MSG_MR;
-  memcpy(&conn->send_msg->data.mr, conn->rdma_remote_mr, sizeof(struct ibv_mr));
+  
+  for (ab = 0; ab < RING_BUFFER_SIZE; ab++) {
+  	memcpy(&conn->send_msg->data.mr[ab], conn->rdma_remote_mr[ab], sizeof(struct ibv_mr));   
+    if (debug)
+  		printf(":Copied memory region: %ld into send_msg\n", (long)conn->rdma_remote_mr[ab]);
+  }  	
 
-  send_message(conn);
+  send_message(conn);  
 }
 
-void set_mode(enum mode m)
-{
+void set_mode(enum mode m) {
   s_mode = m;
 }
 
@@ -396,5 +461,13 @@ void setClient(int client) {
 
 void setUdp(int udp) {
   udpMode = udp;
+}
+
+void incCurrMR() {
+  currMR++;
+  if (currMR >= RING_BUFFER_SIZE)
+  	currMR = 0;
+  if (debug)
+  	printf("incCurMR(), CurrMR %d\n", currMR);
 }
 
