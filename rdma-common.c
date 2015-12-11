@@ -2,14 +2,15 @@
 #include <unistd.h>
 
 //parameters to edit
-#define RING_BUFFER_SIZE 3
+#define RING_BUFFER_SIZE 30
 static const int RDMA_BUFFER_SIZE = 8192;
 static const int debug = 1;
+static const int delay = 1000;
 
 //global variables, don't touch
 static int nowSending = 0;
 static int udpMode = 0;
-static int counter;
+static long counter;
 static int currMR = 0;
 
 struct message {
@@ -17,6 +18,11 @@ struct message {
     MSG_MR,
     MSG_DONE
   } type;
+
+struct rdmaWrite {
+	long sequence;
+	char textMessage[130];
+} singleWrite;
 
   union {
     struct ibv_mr mr[RING_BUFFER_SIZE];
@@ -275,9 +281,17 @@ void on_completion(struct ibv_wc *wc)
   		if (debug) {
       		printf("CurrMR %d, writing a message in local region MR \n", currMR);
 			printf("Local buffer contents: %s\n", conn->rdma_local_region[currMR]);
-		}		
+		}	
 
-        sprintf(conn->rdma_local_region[currMR], "Message number %d\n", counter);
+		struct rdmaWrite mesg;
+		mesg.sequence = counter;
+
+        sprintf(mesg.textMessage, "Message number %ld", counter);
+		memcpy(conn->rdma_local_region[currMR], &mesg, sizeof(mesg));
+
+		counter++;
+
+//		sprintf(conn->rdma_local_region[currMR], "Message number %ld\n", counter);
 
     	memset(&wr, 0, sizeof(wr));
 
@@ -309,16 +323,31 @@ void on_completion(struct ibv_wc *wc)
 
 		incCurrMR();
 
-	usleep(35);
+	usleep(delay);
 
     	if (debug)
       		printf("Receives posted\n");
 
 //    	send_mr(conn);
    
-     } else { //we're on server side
+     } else { //we're on server side and we're receiving the messages
 
-		printf("Local buffer contents: %s, currMR: %d\n", conn->rdma_local_region[currMR], currMR);
+		struct rdmaWrite tmpmesg;
+
+		while (1) {
+			for (int a = 0; a < RING_BUFFER_SIZE; a++) {
+				//char tmpbuff[5];
+
+				//printf("Server buffer number %d: %s", a, conn->rdma_remote_region[a]);
+
+				memcpy(&tmpmesg, conn->rdma_remote_region[a], sizeof(tmpmesg));
+				//memcpy(tmpbuff2, tmpbuff, sizeof(tmpbuff2));
+				printf("%ld - %s\n", tmpmesg.sequence, tmpmesg.textMessage);
+
+				//Message number 1827
+				usleep(delay);
+			}
+		}
 
 	}
 
@@ -470,4 +499,5 @@ void incCurrMR() {
   if (debug)
   	printf("incCurMR(), CurrMR %d\n", currMR);
 }
+
 
