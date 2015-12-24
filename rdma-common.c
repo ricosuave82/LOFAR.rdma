@@ -2,10 +2,10 @@
 #include <unistd.h>
 
 //parameters to edit
-#define RING_BUFFER_SIZE 30
+#define RING_BUFFER_SIZE 40
 static const int RDMA_BUFFER_SIZE = 8192;
-static const int debug = 1;
-static const int delay = 1000;
+static const int debug = 0;
+static const int delay = 35;
 
 //global variables, don't touch
 static int nowSending = 0;
@@ -256,9 +256,9 @@ void on_completion(struct ibv_wc *wc)
     }
 
   } else {
-    conn->send_state++;
+   conn->send_state++;
    if (debug) 
-     printf("send state increased to %dy.\n", conn->send_state);
+     printf("Received a SEND - write buffer half full?\n");
   }
 
   if (debug)	
@@ -315,7 +315,7 @@ void on_completion(struct ibv_wc *wc)
 		if (debug)
 			printf("CurrMR: %d\n",currMR);
 
-	for (count = 0; count < 1; count ++)
+		for (count = 0; count < 1; count ++)
     		TEST_NZ(ibv_post_send(conn->qp, &wr, &bad_wr));
     
     	if (debug)
@@ -323,31 +323,35 @@ void on_completion(struct ibv_wc *wc)
 
 		incCurrMR();
 
-	usleep(delay);
+		usleep(delay);
 
-    	if (debug)
-      		printf("Receives posted\n");
+		if (counter % (RING_BUFFER_SIZE / 2) == 0) {
 
-//    	send_mr(conn);
+			conn->send_msg->type = MSG_DONE;
+    		send_message(conn);
+
+		}
    
      } else { //we're on server side and we're receiving the messages
 
-		struct rdmaWrite tmpmesg;
+	 if (debug)
+	 	printf("Received a SEND. Reading half-buffer.\n");
 
-		while (1) {
-			for (int a = 0; a < RING_BUFFER_SIZE; a++) {
-				//char tmpbuff[5];
+	struct rdmaWrite tmpmesg;
+	//FILE *dump;
 
-				//printf("Server buffer number %d: %s", a, conn->rdma_remote_region[a]);
+	//dump = fopen("/dev/null", "w");
 
-				memcpy(&tmpmesg, conn->rdma_remote_region[a], sizeof(tmpmesg));
-				//memcpy(tmpbuff2, tmpbuff, sizeof(tmpbuff2));
-				printf("%ld - %s\n", tmpmesg.sequence, tmpmesg.textMessage);
+	for (int a = 0; a < RING_BUFFER_SIZE / 2; a++) {
+		memcpy(&tmpmesg, conn->rdma_remote_region[currMR], sizeof(tmpmesg));
+		if (debug == 2)
+			printf("%ld - %s\n", tmpmesg.sequence, tmpmesg.textMessage);
+			
+		//fprintf(dump, "%s", tmpmesg.textMessage);
+		incCurrMR();
+	}
 
-				//Message number 1827
-				usleep(delay);
-			}
-		}
+	post_receives(conn);
 
 	}
 
