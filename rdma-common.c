@@ -2,10 +2,10 @@
 #include <unistd.h>
 
 //parameters to edit
-#define RING_BUFFER_SIZE 40
+#define RING_BUFFER_SIZE 20
 static const int RDMA_BUFFER_SIZE = 8192;
-static const int debug = 0;
-static const int delay = 35;
+static const int debug = 1;
+static const int delay = 3500;
 
 //global variables, don't touch
 static int nowSending = 0;
@@ -240,7 +240,7 @@ void on_completion(struct ibv_wc *wc)
 
 	  }
 
-      post_receives(conn); /* only rearm for MSG_MR */
+      //post_receives(conn); /* only rearm for MSG_MR */
       if (debug)
 			printf("currMR = %d, posted receive after receiving Mem region\n", currMR);
 	  
@@ -344,8 +344,7 @@ void on_completion(struct ibv_wc *wc)
 
 	for (int a = 0; a < RING_BUFFER_SIZE / 2; a++) {
 		memcpy(&tmpmesg, conn->rdma_remote_region[currMR], sizeof(tmpmesg));
-		if (debug == 2)
-			printf("%ld - %s\n", tmpmesg.sequence, tmpmesg.textMessage);
+		printf("%ld - %s\n", tmpmesg.sequence, tmpmesg.textMessage);
 			
 		//fprintf(dump, "%s", tmpmesg.textMessage);
 		incCurrMR();
